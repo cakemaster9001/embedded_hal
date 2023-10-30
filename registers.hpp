@@ -2,10 +2,10 @@
 #pragma once
 
 #include <bitset>
-#include <concepts>
-#include <cstdint>
 
+#include "bitmask.hpp"
 #include "enum_utils.hpp"
+#include "equality.hpp"
 
 namespace registers {
 enum class Policy {
@@ -20,67 +20,21 @@ concept Readable = (P == Policy::Readable) || (P == Policy::ReadWritable);
 template <Policy P>
 concept Writable = (P == Policy::Writable) || (P == Policy::ReadWritable);
 
-using BitMaskType = unsigned long long;
-
-template <BitMaskType v>
-struct NumBits : public std::integral_constant<BitMaskType, v> {
-	static_assert(v > 0ull, "No bits selected");
-};
-
-template <BitMaskType v>
-struct StartingBit : public std::integral_constant<BitMaskType, v> {
-	static_assert(v < sizeof(v) * 8u, "Starting bit too great");
-};
-
-/**
- * @brief This should be some kind of constructor i feel.
- */
-template <enum_utils::Enum E, E e>
-static constexpr auto StartingBitFromEnum() {
-	return StartingBit<enum_utils::underlying(e)>{};
-}
-
-template <BitMaskType v>
-struct BitMask : std::integral_constant<BitMaskType, v> {
-	static_assert(v > BitMaskType{0ull}, "Empty bitmask");
-
-	BitMask() = default;
-
-	template <std::size_t N>
-	constexpr explicit BitMask(std::bitset<N> bitset) noexcept
-	    : BitMask{bitset.to_ullong()} {}
-
-	constexpr BitMask operator~() const noexcept { return BitMask{~v}; }
-};
-
-/*
-    This should be a constructor of some form i feel.
-*/
-template <NumBits num_bits, StartingBit begin_bit>
-constexpr auto BitMaskFromStartEnd() noexcept {
-	static_assert(num_bits.value >= BitMaskType{1ull}, "No bits selected");
-	static_assert(begin_bit.value < sizeof(BitMaskType) * 8u,
-	              "Mask type too small");
-
-	constexpr BitMaskType mask_value{((1u << num_bits.value) - 1u)
-	                                 << begin_bit.value};
-	return BitMask<mask_value>();
-}
-
 template <typename RegType, Policy P>
 class Reg {
 	using reg_type = volatile RegType*;
 	using const_reg_type = const volatile RegType*;
+	using type = Reg<RegType, P>;
 
    public:
 	static consteval std::size_t num_bits() noexcept {
-		return sizeof(RegType) * 8u;
+		constexpr auto max_val = std::numeric_limits<RegType>::max();
+		return std::bit_width(max_val);
 	}
-	using RegAsBits = std::bitset<Reg<RegType, P>::num_bits()>;
 
-	consteval std::size_t size() const noexcept {
-		return Reg<RegType, P>::num_bits();
-	}
+	using RegAsBits = std::bitset<type::num_bits()>;
+
+	consteval std::size_t size() const noexcept { return type::num_bits(); }
 
 	/**
 	 * @brief Construct a Reg from an address.
@@ -125,35 +79,12 @@ class Reg {
 	 * otherwise.
 	 */
 	template <BitMask mask, bool AsBits = false>
-	[[nodiscard]] constexpr auto read() const noexcept
-	    requires Readable<P>
-	{
-		static_assert(RegAsBits{}.size() >= std::bit_width(mask.value),
-		              "Length of mask too great");
-
+	    requires Readable<P> &&
+	             GreaterThanEqual<type::num_bits(), mask.bits_in_mask()>
+	[[nodiscard]] constexpr auto read() const noexcept {
 		auto value = read<AsBits>();
 		value &= mask.value;
 		return value;
-	}
-
-	/**
-	 * @brief Construct a consecutive bitmask of num_bits length starting at
-	 * begin_bit and apply it to the value read from the register.
-	 *
-	 * @tparam num_bits - The number of bits in the bitmask.
-	 * @tparam begin_bit - The beginning bit of the bitmask.
-	 * @tparam AsBits - Specify the return type as a bitset.
-	 * @return the value of the register as a bitset if AsBits is true, RegType
-	 * otherwise.
-	 */
-	template <NumBits num_bits, StartingBit begin_bit, bool AsBits = false>
-	[[nodiscard]] constexpr auto read() const noexcept
-	    requires Readable<P>
-	{
-		static_assert(RegAsBits{}.size() > begin_bit.value,
-		              "Begin bit not in bit range");
-		constexpr auto bitmask = BitMaskFromStartEnd<num_bits, begin_bit>();
-		return read<bitmask, AsBits>();
 	}
 
 	/**
@@ -164,12 +95,12 @@ class Reg {
 	 * @return the value of the bit as a bitset if AsBits is true, RegType
 	 * otherwise.
 	 */
-	template <StartingBit begin_bit, bool AsBits = false>
+	template <StartBit bit, bool AsBits = false>
 	[[nodiscard]] constexpr auto read() const noexcept
 	    requires Readable<P>
 	{
-		constexpr NumBits<1u> num_bits;
-		return read<num_bits, begin_bit, AsBits>();
+		constexpr BitMask bitmask = SingleBitMask<bit>{};
+		return read<bitmask, AsBits>();
 	}
 
 	/**
@@ -194,8 +125,7 @@ class Reg {
 	constexpr auto& write(const RegAsBits& val) const noexcept
 	    requires Writable<P>
 	{
-		*reinterpret_cast<reg_type>(addr_) = val.to_ullong();
-		return *this;
+		return write(val.to_ullong());
 	}
 
 	/**
@@ -207,32 +137,10 @@ class Reg {
 	 */
 	template <BitMask mask>
 	constexpr auto& write(auto val) const noexcept
-	    requires Writable<P>
+	    requires Writable<P> &&
+	             GreaterThanEqual<type::num_bits(), mask.bits_in_mask()>
 	{
-		static_assert(RegAsBits{}.size() >= std::bit_width(mask.mask),
-		              "Length of mask too great");
-
 		return write(val & mask.mask);
-	}
-
-	/**
-	 * @brief Construct a consecutive bitmask of num_bits length starting at
-	 * begin_bit, apply the & operator to the specified value and write it to
-	 * the register.
-	 *
-	 * @tparam num_bits - The number of bits in the bitmask.
-	 * @tparam begin_bit - The starting bit of the bitmask.
-	 * @param val - The value to write into the register.
-	 * @return a reference to this register.
-	 */
-	template <NumBits num_bits, StartingBit begin_bit>
-	constexpr auto& write(auto val) const noexcept
-	    requires Writable<P>
-	{
-		static_assert(RegAsBits{}.size() > begin_bit.bit,
-		              "Begin bit not in bit range");
-
-		return write<createBitMask(num_bits, begin_bit)>(val);
 	}
 
 	/**
@@ -243,11 +151,12 @@ class Reg {
 	 * @param val - The value to write into the register.
 	 * @return a reference to this register.
 	 */
-	template <StartingBit begin_bit>
+	template <StartBit bit>
 	constexpr auto& write(auto val) const noexcept
 	    requires Writable<P>
 	{
-		return write<NumBits<1u>{}, begin_bit>(val);
+		constexpr BitMask bitmask = SingleBitMask<bit>{};
+		return write<bitmask>(val);
 	}
 
 	/**
@@ -280,11 +189,9 @@ class Reg {
 	 */
 	template <BitMask mask, bool AsBits = false>
 	constexpr auto readModifyWrite(auto val) const noexcept
-	    requires Writable<P> && Readable<P>
+	    requires Writable<P> && Readable<P> &&
+	             GreaterThanEqual<type::num_bits(), mask.bits_in_mask()>
 	{
-		static_assert(RegAsBits{}.size() >= std::bit_width(mask.mask),
-		              "Length of mask too great");
-
 		auto read_val = read<~mask, AsBits>();
 		auto masked_val = val & mask.mask;
 		auto write_val = masked_val | read_val;
@@ -294,38 +201,21 @@ class Reg {
 	}
 
 	/**
-	 * @brief Construct a consecutive bitmask of length num_bits starting at
-	 * begin_bit and modify the bits specified by that bitmask.
+	 * @brief Modify the specified bit in the register to the specified value.
 	 *
-	 * @tparam num_bits - The number of bits to modify.
-	 * @tparam begin_bit - The stargin bit of the bitmask.
+	 * @tparam bit - The bit to modify.
 	 * @tparam AsBits - Specify the return type as a bitset.
-	 * @param val - The value to write into the register. This value is anded
-	 * with the generated bitmask.
+	 * @param val - Set or clear the bit.
+	 *
 	 * @return the new value of the register as a bitset if AsBits is true,
 	 * RegType otherwise.
 	 */
-	template <NumBits num_bits, StartingBit begin_bit, bool AsBits = false>
-	constexpr auto readModifyWrite(auto val) const noexcept
+	template <StartBit bit, bool AsBits = false>
+	constexpr auto readModifyWrite(bool val) const noexcept
 	    requires Writable<P> && Readable<P>
 	{
-		static_assert(RegAsBits{}.size() > begin_bit.bit,
-		              "Begin bit not in bit range");
-
-		return readModifyWrite<createBitMask(num_bits, begin_bit), AsBits>(val);
-	}
-
-	/**
-	 * @brief Set all bits in the register.
-	 *
-	 * @return a reference to this register.
-	 */
-	constexpr auto& set_bits() const noexcept
-	    requires Writable<P>
-	{
-		auto all_set = RegAsBits{}.set();
-		write(all_set);
-		return *this;
+		constexpr BitMask bitmask = SingleBitMask<bit>{};
+		return readModifyWrite<bitmask, AsBits>(bitmask.value);
 	}
 
 	/**
@@ -336,11 +226,9 @@ class Reg {
 	 */
 	template <BitMask mask>
 	constexpr auto& set_bits() const noexcept
-	    requires Writable<P>
+	    requires Writable<P> &&
+	             GreaterThanEqual<type::num_bits(), mask.bits_in_mask()>
 	{
-		static_assert(RegAsBits{}.size() >= std::bit_width(mask.value),
-		              "Length of mask too great");
-
 		/*
 		    This might not be the correct contract... See flip_bits() for
 		   comment.
@@ -350,20 +238,16 @@ class Reg {
 	}
 
 	/**
-	 * @brief Create a consecutive bitmask of num_bits length starting from
-	 * begin_bit and set those bits.
+	 * @brief Set all bits in the register.
 	 *
-	 * @tparam num_bits - The number of bits to set.
-	 * @tparam begin_bit - The starting bit of the bitmask.
 	 * @return a reference to this register.
 	 */
-	template <NumBits num_bits, StartingBit begin_bit>
 	constexpr auto& set_bits() const noexcept
 	    requires Writable<P>
 	{
-		static_assert(RegAsBits{}.size() > begin_bit.value,
-		              "Begin bit not in bit range");
-		return set_bits<BitMaskFromStartEnd<num_bits, begin_bit>()>();
+		constexpr auto num_bits = NumBits<type::num_bits()>{};
+		constexpr BitMask bitmask = ConsecutiveBitMask<num_bits>{};
+		return set_bits<bitmask>();
 	}
 
 	/**
@@ -385,11 +269,12 @@ class Reg {
 	 * @tparam begin_bit - The bit to set.
 	 * @return a reference to this register.
 	 */
-	template <StartingBit begin_bit>
+	template <StartBit bit>
 	constexpr auto& set_bit() const noexcept
 	    requires Writable<P>
 	{
-		return set_bits<NumBits<1u>{}, begin_bit>();
+		constexpr BitMask bitmask = SingleBitMask<bit>{};
+		return set_bits<bitmask>();
 	}
 
 	/**
@@ -400,8 +285,7 @@ class Reg {
 	constexpr auto& clear_bits() const noexcept
 	    requires Writable<P>
 	{
-		write(0u);
-		return *this;
+		return write(0u);
 	}
 
 	/**
@@ -412,7 +296,8 @@ class Reg {
 	 */
 	template <BitMask mask>
 	constexpr auto& clear_bits() const noexcept
-	    requires Writable<P>
+	    requires Writable<P> &&
+	             GreaterThanEqual<type::num_bits(), mask.bits_in_mask()>
 	{
 		/*
 		    This might not be the correct contract... See flip_bits() for
@@ -420,24 +305,6 @@ class Reg {
 		*/
 		*reinterpret_cast<reg_type>(addr_) &= ~(mask.value);
 		return *this;
-	}
-
-	/**
-	 * @brief Create a consecutive bitmask of num_bits length starting from
-	 * begin_bit and clear those bits.
-	 *
-	 * @tparam num_bits - The number of bits to clear.
-	 * @tparam begin_bit - The starting bit of the bitmask.
-	 * @return a reference to this register.
-	 */
-	template <NumBits num_bits, StartingBit begin_bit>
-	constexpr auto& clear_bits() const noexcept
-	    requires Writable<P>
-	{
-		static_assert(RegAsBits{}.size() > begin_bit.value,
-		              "Begin bit not in bit range");
-		constexpr auto bitmask = BitMaskFromStartEnd<num_bits, begin_bit>();
-		return clear_bits<bitmask>();
 	}
 
 	/**
@@ -459,11 +326,12 @@ class Reg {
 	 * @tparam begin_bit - The bit to clear.
 	 * @return a reference to this register.
 	 */
-	template <StartingBit begin_bit>
+	template <StartBit bit>
 	constexpr auto& clear_bit() const noexcept
 	    requires Writable<P>
 	{
-		return clear_bits<NumBits<1u>{}, begin_bit>();
+		constexpr BitMask bitmask = SingleBitMask<bit>{};
+		return clear_bits<bitmask>();
 	}
 
 	/**
@@ -474,8 +342,9 @@ class Reg {
 	constexpr auto& flip_bits() const noexcept
 	    requires Readable<P> && Writable<P>
 	{
-		constexpr auto start = StartingBit<0ull>();
-		return flip_bits<NumBits{size()}, start>();
+		constexpr auto num_bits = NumBits<type::num_bits()>{};
+		constexpr BitMask bitmask = ConsecutiveBitMask<num_bits>{};
+		return flip_bits<bitmask>();
 	}
 
 	/**
@@ -486,7 +355,8 @@ class Reg {
 	 */
 	template <BitMask mask, bool AsBits>
 	constexpr auto& flip_bits() const noexcept
-	    requires Readable<P> && Writable<P>
+	    requires Readable<P> && Writable<P> &&
+	             GreaterThan<type::num_bits(), mask.bits_in_mask()>
 	{
 		// this could also have been implemented as an xor on the register
 		// itself... But that might not be desired - i think? Consider changing
@@ -498,33 +368,17 @@ class Reg {
 	}
 
 	/**
-	 * @brief Create a consecutive bitmask of num_bits length starting from
-	 * begin_bit and flip those bits.
-	 *
-	 * @tparam num_bits - The number of bits to flip.
-	 * @tparam begin_bit - The starting bit of the bitmask.
-	 * @return a reference to this register.
-	 */
-	template <NumBits num_bits, StartingBit begin_bit>
-	constexpr auto& flip_bits() const noexcept
-	    requires Readable<P> && Writable<P>
-	{
-		static_assert(RegAsBits{}.size() > begin_bit.bit,
-		              "Begin bit not in bit range");
-		return flip_bits<createBitMask(num_bits, begin_bit)>();
-	}
-
-	/**
 	 * @brief Flip a single bit in the register.
 	 *
 	 * @tparam begin_bit - The bit to flip.
 	 * @return a reference to this register.
 	 */
-	template <StartingBit begin_bit>
+	template <StartBit begin_bit>
 	constexpr auto& flip_bit() const noexcept
 	    requires Readable<P> && Writable<P>
 	{
-		return flip_bits<NumBits<1u>{}, begin_bit>();
+		constexpr BitMask bitmask = SingleBitMask<begin_bit>{};
+		return flip_bits<bitmask>();
 	}
 
    private:

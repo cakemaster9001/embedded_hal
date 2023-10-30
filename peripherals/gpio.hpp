@@ -1,7 +1,9 @@
 
 #pragma once
 
+#include "bitmask.hpp"
 #include "enum_utils.hpp"
+#include "peripheral.hpp"
 #include "registers.hpp"
 
 namespace gpio {
@@ -24,10 +26,12 @@ struct Gpio {
 	    : PIN{base_addr}, DDR{base_addr + 1u}, PORT{base_addr + 2u} {}
 
 	enum class Pin { PIN0, PIN1, PIN2, PIN3, PIN4, PIN5, PIN6, PIN7, LAST };
+
 	using PinFlag = _eutils::EnumFlag<Pin>;
 
 	enum class PinMode { Input, Output, LAST };
-	using PinModes = _eutils::EnumArray<PinMode, decltype(DDR)::num_bits()>;
+
+	using PinModeArray = _eutils::EnumArray<PinMode, decltype(DDR)::num_bits()>;
 
 	/**
 	 * @brief Set the mode of a pin.
@@ -37,10 +41,10 @@ struct Gpio {
 	 * @return a reference to this peripheral.
 	 */
 	template <PinMode mode, Pin pin>
-	    requires((mode != PinMode::LAST) && (pin != Pin::LAST))
 	constexpr auto& setMode() const noexcept {
-		constexpr auto bit = _regs::StartingBitFromEnum<pin>();
-		if constexpr (mode == PinMode::Input) {
+		constexpr auto bit = StartBit<enum_utils::EnumValue<pin>>();
+		constexpr auto mode_value = enum_utils::EnumValue<mode>();
+		if constexpr (mode_value == PinMode::Input) {
 			DDR.clear_bit<bit>();
 		} else {
 			DDR.set_bit<bit>();
@@ -56,9 +60,9 @@ struct Gpio {
 	 * @return a reference to this peripheral.
 	 */
 	template <PinMode mode>
-	    requires(mode != PinMode::LAST)
 	constexpr auto& setMode(const PinFlag& pins) const noexcept {
-		if constexpr (mode == PinMode::Input) {
+		constexpr auto mode_val = enum_utils::EnumValue<PinMode, mode>();
+		if constexpr (mode_val == PinMode::Input) {
 			DDR.clear_bits(pins.as_bits());
 		} else {
 			DDR.set_bits(pins.as_bits());
@@ -72,7 +76,7 @@ struct Gpio {
 	 * @param modes - The specific mode for each pin.
 	 * @return a reference to this peripheral.
 	 */
-	constexpr auto& setMode(const PinModes& modes) const noexcept {
+	constexpr auto& setMode(const PinModeArray& modes) const noexcept {
 		DDR.write(modes.to_bits());
 		return *this;
 	}
@@ -85,8 +89,8 @@ struct Gpio {
 	 */
 	template <PinMode mode>
 	constexpr auto& setMode() const noexcept {
-		PinModes modes;
-		modes.fill(mode);
+		PinModeArray modes;
+		modes.fill(enum_utils::EnumValue<PinMode, mode>());
 		return setMode(modes);
 	}
 
@@ -95,8 +99,8 @@ struct Gpio {
 	 *
 	 * @return PinModes
 	 */
-	constexpr PinModes mode() const noexcept {
-		return PinModes{DDR.read<false>()};
+	constexpr PinModeArray mode() const noexcept {
+		return PinModeArray{DDR.read<false>()};
 	}
 
 	/**
@@ -106,9 +110,8 @@ struct Gpio {
 	 * @return constexpr PinMode
 	 */
 	template <Pin pin>
-	    requires(pin != Pin::LAST)
-	constexpr PinMode mode() const noexcept {
-		constexpr auto bit = _regs::StartingBitFromEnum<pin>();
+	constexpr auto mode() const noexcept {
+		constexpr auto bit = StartBit<enum_utils::EnumValue<pin>()>{};
 		auto pinVal = DDR.read<bit>();
 		if (pinVal == 0u) {
 			return PinMode::Input;
@@ -117,7 +120,8 @@ struct Gpio {
 	}
 
 	enum class PinOutput { LOW, HIGH, LAST };
-	using PinOutputs =
+
+	using PinOutputArray =
 	    _eutils::EnumArray<PinOutput, decltype(PORT)::num_bits()>;
 
 	/**
@@ -129,9 +133,8 @@ struct Gpio {
 	 * @return a reference to this peripheral.
 	 */
 	template <PinOutput output, Pin pin>
-	    requires((output != PinOutput::LAST) && (pin != Pin::LAST))
 	constexpr auto& setOutput() const noexcept {
-		constexpr auto bit = _regs::StartingBitFromEnum<pin>();
+		constexpr auto bit = StartingBitFromEnum<pin>();
 		if constexpr (output == PinOutput::LOW) {
 			PORT.clear_bit<bit>();
 		} else {
@@ -149,7 +152,6 @@ struct Gpio {
 	 * @return a reference to this peripheral.
 	 */
 	template <PinOutput output>
-	    requires(output != PinOutput::LAST)
 	constexpr auto& setOutput(const PinFlag& pins) const noexcept {
 		if constexpr (output == PinOutput::LOW) {
 			PORT.clear_bits(pins.as_bits());
@@ -165,7 +167,7 @@ struct Gpio {
 	 * @param pins - The output of each specific pin.
 	 * @return a reference to this peripheral.
 	 */
-	constexpr auto& setOutput(const PinOutputs& pins) const noexcept {
+	constexpr auto& setOutput(const PinOutputArray& pins) const noexcept {
 		PORT.write(pins.to_bits());
 		return *this;
 	}
@@ -178,8 +180,8 @@ struct Gpio {
 	 */
 	template <PinOutput output>
 	constexpr auto& setOutput() const noexcept {
-		PinOutputs outputs;
-		outputs.fill(output);
+		PinOutputArray outputs;
+		outputs.fill(enum_utils::EnumValue<output>());
 		return setOutput(outputs);
 	}
 
@@ -188,8 +190,8 @@ struct Gpio {
 	 *
 	 * @return the outputs of the pins.
 	 */
-	constexpr PinOutputs output() const noexcept {
-		return PinOutputs{PORT.read()};
+	constexpr PinOutputArray output() const noexcept {
+		return PinOutputArray{PORT.read()};
 	}
 
 	/**
@@ -200,9 +202,8 @@ struct Gpio {
 	 * @return The output of the selected pin.
 	 */
 	template <Pin pin>
-	    requires(pin != Pin::LAST)
-	constexpr PinOutput output() const noexcept {
-		constexpr auto bit = _regs::StartingBitFromEnum<pin>();
+	constexpr auto output() const noexcept {
+		constexpr auto bit = StartBit<enum_utils::EnumValue<pin>()>{};
 		auto res = PORT.read<bit>();
 		if (res == 0u) {
 			return PinOutput::LOW;
@@ -211,13 +212,13 @@ struct Gpio {
 	}
 
 	using PinValue = PinOutput;
-	using PinValues = PinOutputs;
+	using PinValueArray = PinOutputArray;
 	/**
 	 * @brief Read the value of the pins.
 	 *
 	 * @return the values of the pins.
 	 */
-	constexpr PinValues read() const noexcept { return output(); }
+	constexpr PinValueArray read() const noexcept { return output(); }
 
 	/**
 	 * @brief Read the value of a specific pin.
@@ -227,8 +228,7 @@ struct Gpio {
 	 * @return The value of the selected pin.
 	 */
 	template <Pin pin>
-	    requires(pin != Pin::LAST)
-	constexpr PinValue read() const noexcept {
+	constexpr auto read() const noexcept {
 		return output<pin>();
 	}
 
@@ -240,9 +240,8 @@ struct Gpio {
 	 * @return a reference to this peripheral.
 	 */
 	template <Pin pin>
-	    requires(pin != Pin::LAST)
 	constexpr auto& toggle() const noexcept {
-		constexpr auto bit = _regs::StartingBitFromEnum<pin>();
+		constexpr auto bit = StartBit<enum_utils::EnumValue<pin>()>{};
 		PIN.set_bit<bit>();
 		return *this;
 	}
@@ -272,6 +271,26 @@ struct Gpio {
 
 	enum class PinChangeStrategy { ModeFirst, OutputFirst };
 
+   private:
+	template <PinConfig cfg>
+	static constexpr auto modeValFromCFG() noexcept {
+		if constexpr (cfg == PinConfig::Input || cfg == PinConfig::InputPU) {
+			return PinMode::Input;
+		} else {
+			return PinMode::Output;
+		}
+	}
+
+	template <PinConfig cfg>
+	static constexpr auto outputValFromCFG() noexcept {
+		if constexpr (cfg == PinConfig::Input || cfg == PinConfig::OutputLow) {
+			return PinOutput::LOW;
+		} else {
+			return PinOutput::HIGH;
+		}
+	}
+
+   public:
 	/**
 	 * @brief Configure the value of all the pins.
 	 *
@@ -282,15 +301,16 @@ struct Gpio {
 	template <PinConfig cfg,
 	          PinChangeStrategy strategy = PinChangeStrategy::ModeFirst>
 	constexpr auto& configure() const noexcept {
-		constexpr auto cfg_val = configRegVals<cfg>();
+		constexpr auto mode = modeValFromCFG<cfg>();
+		constexpr auto output = outputValFromCFG<cfg>();
 		if constexpr (strategy == PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode>();
+			setMode<mode>();
 		}
 
-		setOutput<cfg_val.output>();
+		setOutput<output>();
 
 		if constexpr (strategy != PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode>();
+			setMode<mode>();
 		}
 		return *this;
 	}
@@ -306,15 +326,16 @@ struct Gpio {
 	template <PinConfig cfg, Pin pin,
 	          PinChangeStrategy strategy = PinChangeStrategy::ModeFirst>
 	constexpr auto& configure() const noexcept {
-		auto cfg_val = configRegVals<cfg>();
+		const constexpr auto mode = modeValFromCFG<cfg>();
+		const constexpr auto output = outputValFromCFG<cfg>();
 		if constexpr (strategy == PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode, pin>();
+			setMode<mode, pin>();
 		}
 
-		setOutput<cfg_val.output, pin>();
+		setOutput<output, pin>();
 
 		if constexpr (strategy != PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode, pin>();
+			setMode<mode, pin>();
 		}
 		return *this;
 	}
@@ -330,37 +351,18 @@ struct Gpio {
 	template <PinConfig cfg,
 	          PinChangeStrategy strategy = PinChangeStrategy::ModeFirst>
 	constexpr auto& configure(const PinFlag& pins) const noexcept {
-		auto cfg_val = configRegVals<cfg>();
+		const constexpr auto mode = modeValFromCFG<cfg>();
+		const constexpr auto output = outputValFromCFG<cfg>();
 		if constexpr (strategy == PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode>(pins);
+			setMode<mode>(pins);
 		}
 
-		setOutput<cfg_val.output>(pins);
+		setOutput<output>(pins);
 
 		if constexpr (strategy != PinChangeStrategy::ModeFirst) {
-			setMode<cfg_val.mode>(pins);
+			setMode<mode>(pins);
 		}
 		return *this;
-	}
-
-   private:
-	struct PinConfigVal {
-		PinMode mode;
-		PinOutput output;
-	};
-
-	template <PinConfig cfg>
-	static consteval PinConfigVal configRegVals() noexcept {
-		PinConfigVal ret = {.mode = PinMode::Input, .output = PinOutput::LOW};
-		if constexpr (cfg == PinConfig::InputPU ||
-		              cfg == PinConfig::OutputHigh) {
-			ret.output = PinOutput::HIGH;
-		}
-		if constexpr (cfg == PinConfig::OutputLow ||
-		              cfg == PinConfig::OutputHigh) {
-			ret.mode = PinMode::Output;
-		}
-		return ret;
 	}
 };
 
@@ -429,6 +431,6 @@ struct GpioController {
 	static const constexpr uintptr_t MCUCR_reg_addr{0x55};
 	static const constexpr _regs::Reg<uint8_t, _regs::Policy::ReadWritable>
 	    MCURCR{MCUCR_reg_addr};
-	static const constexpr auto PUD_bit_pos = _regs::StartingBit<4u>{};
+	static const constexpr auto PUD_bit_pos = StartBit<4u>{};
 };
 }  // namespace gpio

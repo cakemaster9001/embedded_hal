@@ -3,15 +3,16 @@
 #include <cstdint>
 #include <iostream>
 
+#include "bitmask.hpp"
 #include "enum_common.hpp"
 
 namespace enum_utils {
 template <EnumHasLast EnumT, std::size_t N>
 struct EnumArray : public std::array<EnumT, N> {
 	static const constexpr auto LAST_VALUE = underlying(EnumT::LAST);
-	static const constexpr auto BIT_WIDTH = std::bit_width(LAST_VALUE - 1u);
 
    public:
+	static const constexpr auto BIT_WIDTH = std::bit_width(LAST_VALUE - 1u);
 	using bit_type = std::bitset<BIT_WIDTH * N>;
 
 	/**
@@ -31,7 +32,9 @@ struct EnumArray : public std::array<EnumT, N> {
 
 	using std::array<EnumT, N>::array;
 	constexpr explicit EnumArray(const bit_type& bits) {
-		static constexpr auto bit_mask = bit_type{(1u << BIT_WIDTH) - 1};
+		static constexpr auto num_bits = NumBits<BIT_WIDTH>{};
+		static constexpr BitMask mask = ConsecutiveBitMask<num_bits>{};
+		static constexpr bit_type bit_mask{mask.value};
 
 		for (auto i = 0; i < N; ++i) {
 			auto curr_offset = i * BIT_WIDTH;

@@ -8,86 +8,159 @@
 #include "enum_common.hpp"
 
 namespace enum_utils {
-template <Enum EnumT>
-    requires EnumHasLast<EnumT>
+template <EnumHasLast EnumT>
 class EnumFlag {
    public:
 	using AsBits = std::bitset<underlying(EnumT::LAST)>;
 
+	/**
+	 * @brief Set the specified bits.
+	 *
+	 * @tparam Es - The bits to set.
+	 *
+	 * @return a reference to this flag.
+	 */
 	template <EnumT... Es>
-	    requires([](auto... rest) {
-		    return ((rest != EnumT::LAST) && ...);
-	    }(Es...))
 	constexpr EnumFlag& set() noexcept {
-		(bits_.set(underlying(Es), true), ...);
+		((bits_.set(UEnumValue<Es>())), ...);
 		return *this;
 	}
 
+	/**
+	 * @brief Set all the bits in this flag.
+	 *
+	 * @return a reference to this flag.
+	 */
 	constexpr EnumFlag& set() noexcept {
 		bits_.set();
 		return *this;
 	}
 
+	/**
+	 * @brief Reset the specified bits.
+	 *
+	 * @tparam Es - The bits to reset.
+	 *
+	 * @return a reference to this flag.
+	 */
 	template <EnumT... Es>
-	    requires([](auto... rest) {
-		    return ((rest != EnumT::LAST) && ...);
-	    }(Es...))
 	constexpr EnumFlag& reset() noexcept {
-		(bits_.reset(underlying(Es)), ...);
+		(bits_.reset(EnumValue(Es)), ...);
 		return *this;
 	}
 
+	/**
+	 * @brief Reset all the bits.
+	 *
+	 * @return a reference to this flag.
+	 */
 	constexpr EnumFlag& reset() noexcept {
 		bits_.reset();
 		return *this;
 	}
 
+	/**
+	 * @brief Flip the specified bits.
+	 *
+	 * @tparam Es - The bits to flip.
+	 *
+	 * @return a reference to this flag.
+	 */
 	template <EnumT... Es>
-	    requires([](auto... rest) {
-		    return ((rest != EnumT::LAST) && ...);
-	    }(Es...))
 	constexpr EnumFlag& flip() noexcept {
-		(bits_.flip(underlying(Es)), ...);
+		(bits_.flip(EnumValue(Es)), ...);
 		return *this;
 	}
 
+	/**
+	 * @brief Flip all the bits.
+	 *
+	 * @return a reference to this flag.
+	 */
 	constexpr EnumFlag& flip() noexcept {
 		bits_.flip();
 		return *this;
 	}
 
+	/**
+	 * @brief Check if all the bits are set.
+	 *
+	 * @return true if all bits are set.
+	 * @return false if at least one bit is not set.
+	 */
 	[[nodiscard]] constexpr bool all() const noexcept { return bits_.all(); }
 
+	/**
+	 * @brief Check if any of the bits are set.
+	 *
+	 * @return true if at least one bit is set.
+	 * @return false if none of the bits are set.
+	 */
 	[[nodiscard]] constexpr bool any() const noexcept { return bits_.any(); }
 
+	/**
+	 * @brief Check if no bits are set.
+	 *
+	 * @return true if no bits are set.
+	 * @return false if any bit is set.
+	 */
 	[[nodiscard]] constexpr bool none() const noexcept { return bits_.none(); }
 
+	/**
+	 * @brief Get the number of bits in this flag.
+	 *
+	 * @return the number of bits in this flag.
+	 */
 	[[nodiscard]] constexpr std::size_t size() const noexcept {
 		return bits_.size();
 	}
 
+	/**
+	 * @brief Get the number of bits set.
+	 *
+	 * @return the number of bits set.
+	 */
 	[[nodiscard]] constexpr std::size_t count() const noexcept {
 		return bits_.count();
 	}
 
-	constexpr std::bitset<underlying(EnumT::LAST)>::reference operator[](
-	    EnumT e) {
-		return bits_[underlying(e)];
+	/**
+	 * @brief Get a modifyable reference to the specified bit.
+	 *
+	 * @param e - The chosen bit.
+	 * @return a modifyable reference to the underlying bit.
+	 */
+	template <EnumT e>
+	constexpr AsBits::reference operator[]() noexcept {
+		return bits_[EnumValue<e>()];
 	}
 
-	constexpr bool operator[](EnumT e) const { return bits_[(underlying(e))]; }
+	/**
+	 * @brief Get a modifyable reference to the specified bit.
+	 *
+	 * @param e - The chosen bit.
+	 * @return a modifyable reference to the underlying bit.
+	 */
+	template <EnumT e>
+	constexpr bool operator[]() const noexcept {
+		return bits_[EnumValue<e>()];
+	}
 
+	/**
+	 * @brief Perform the &= operation on this flag.
+	 *
+	 * @param other - Another flag.
+	 * @return a reference to this flag.
+	 */
 	constexpr EnumFlag& operator&=(const EnumFlag<EnumT>& other) noexcept {
 		bits_ &= other.bits_;
 		return *this;
 	}
 
-	// Does this make sense?????....
-	// Can be called with EnumT::LAST - not so good
-	constexpr EnumFlag& operator&=(EnumT other) noexcept {
-		auto is_set = (*this)[other];
+	constexpr EnumFlag& operator&=(auto e) noexcept {
+		constexpr auto is_set = (*this)[e];
 		reset();
-		(*this)[other] = is_set;
+		(*this)[e] = is_set;
 		return *this;
 	}
 
@@ -96,10 +169,10 @@ class EnumFlag {
 		return *this;
 	}
 
-	// Does this make sense?????....
-	// Can be called with EnumT::LAST - not so good
-	constexpr EnumFlag& operator|=(EnumT other) noexcept {
-		(*this)[other] = true;
+	constexpr EnumFlag& operator|=(EnumT e) noexcept {
+		auto curr_val = as_bits();
+		curr_val |= underlying(e);
+		bits_ = curr_val;
 		return *this;
 	}
 
@@ -108,10 +181,11 @@ class EnumFlag {
 		return *this;
 	}
 
-	// Does this make sense?????....
-	// Can be called with EnumT::LAST - not so good
 	constexpr EnumFlag& operator^=(EnumT other) noexcept {
-		(*this)[other] ^= (*this)[other];
+		auto curr_val = as_bits();
+		curr_val ^= underlying(other);
+		bits_ = curr_val;
+
 		return *this;
 	}
 
@@ -157,18 +231,16 @@ constexpr EnumFlag<E> operator&(const EnumFlag<E>& lhs,
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator&(const EnumFlag<E>& lhs, E rhs) noexcept {
+constexpr EnumFlag<E> operator&(const EnumFlag<E>& lhs, auto rhs) noexcept {
 	EnumFlag<E> res{};
 	res[rhs] = true;
 	res &= lhs;
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator&(E lhs, const EnumFlag<E>& rhs) noexcept {
+constexpr EnumFlag<E> operator&(auto lhs, const EnumFlag<E>& rhs) noexcept {
 	EnumFlag<E> res{};
 	res[lhs] = true;
 	res &= rhs;
@@ -183,17 +255,15 @@ constexpr EnumFlag<E> operator|(const EnumFlag<E>& lhs,
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator|(const EnumFlag<E>& lhs, E rhs) noexcept {
+constexpr EnumFlag<E> operator|(const EnumFlag<E>& lhs, auto rhs) noexcept {
 	EnumFlag<E> res{lhs};
 	res[rhs] = true;
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator|(E lhs, const EnumFlag<E>& rhs) noexcept {
+constexpr EnumFlag<E> operator|(auto lhs, const EnumFlag<E>& rhs) noexcept {
 	EnumFlag<E> res{rhs};
 	res[lhs] = true;
 	return res;
@@ -207,17 +277,15 @@ constexpr EnumFlag<E> operator^(const EnumFlag<E>& lhs,
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator^(const EnumFlag<E>& lhs, E rhs) noexcept {
+constexpr EnumFlag<E> operator^(const EnumFlag<E>& lhs, auto rhs) noexcept {
 	EnumFlag<E> res(lhs);
 	res[rhs] ^= true;
 	return res;
 }
 
-// Can be called with EnumT::LAST - not so good
 template <typename E>
-constexpr EnumFlag<E> operator^(E lhs, const EnumFlag<E>& rhs) noexcept {
+constexpr EnumFlag<E> operator^(auto lhs, const EnumFlag<E>& rhs) noexcept {
 	EnumFlag<E> res(rhs);
 	res[lhs] ^= true;
 	return res;
